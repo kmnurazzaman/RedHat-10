@@ -1,0 +1,26 @@
+#Securing the Boot Loader (GRUB2) on RHEL 10
+
+#==========================================================
+#Check the current boot configuration
+#sudo -i
+
+#Check the operating system
+#cat /etc/redhat-release
+
+#Back up the configuration
+#mkdir -p /root/grub-backup
+#cp -a /boot/grub2/grub.cfg /root/grub-backup/
+#=============================================================
+
+#Set a GRUB2 password
+grub2-setpassword
+
+#The command creates or updates:
+#/boot/grub2/user.cfg
+
+#Verify the password configuration
+#ls -l /boot/grub2/user.cfg
+#cat /boot/grub2/user.cfg
+
+#systemctl reboot
+
