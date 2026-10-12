@@ -1,0 +1,8 @@
+#/etc/sudoers.d/[FileName]
+#===================================================
+#Confirm that the file has valid syntax
+#visudo -cf /etc/sudoers.d/[FileName]
+#===================================================
+visudo
+#tux ALL=(root) /usr/bin/systemctl restart httpd
+
