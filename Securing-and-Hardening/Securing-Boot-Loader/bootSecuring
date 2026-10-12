@@ -1,5 +1,11 @@
 #Securing the Boot Loader (GRUB2) on RHEL 10
 
+#Boot Sequence order
+#1.  BIOS executes MBR (Master Boot Record)
+#2.  MBR executes GRUB2
+#3.  GRUB2 loads the kernel
+#4.  The kernel executes systemd which initialize the system.
+
 #==========================================================
 #Check the current boot configuration
 #sudo -i
