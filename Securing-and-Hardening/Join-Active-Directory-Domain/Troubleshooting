@@ -1,0 +1,28 @@
+Troubleshooting Common Issues
+realm discover fails with “No such realm found” – Your DNS is not pointing at the AD domain controller. Check /etc/resolv.conf and verify the nameserver entry is the DC’s IP address. Also confirm the DC is reachable on port 53.
+realm join fails with “Insufficient permissions” – The AD account you are using does not have permission to join computers to the domain. Use an account that is a member of the Domain Admins group or has been delegated join permissions on the target OU.
+
+id command returns “no such user” – Restart SSSD and clear the cache, then try again.
+
+
+
+sudo systemctl stop sssd
+sudo rm -rf /var/lib/sss/db/*
+sudo systemctl start sssd
+
+
+Home directory not created on login – Make sure oddjobd is running and the authselect profile includes with-mkhomedir.
+
+sudo systemctl status oddjobd
+sudo authselect current
+
+
+
+
+Leave the AD Domain
+
+sudo realm leave example.com
+
+Verify the system has left.
+
+$ realm list

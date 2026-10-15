@@ -1,0 +1,107 @@
+#Prerequisites
+
+#==========================================================
+#A server running RHEL 10 with root or sudo access
+#A working Windows Active Directory domain (Windows Server 2016 or later)
+#Network connectivity between the Linux server and the domain controller on required ports
+
+##fresh RHEL 10 system, register the subscription first if you haven’t already.##
+#==========================================================
+
+#set the DNS server to your domain controller IP.
+
+#sudo nmcli connection modify [INTERFACE] ipv4.dns [DNS-IP]
+sudo nmcli connection modify [INTERFACE] ipv4.dns-search [DOMAIN-NAME]
+sudo nmcli connection down [INTERFACE] && sudo nmcli connection up [INTERFACE]
+
+#confirm the SRV records for LDAP are resolvable realmd uses these during domain discovery.
+
+#nslookup -type=SRV _ldap._tcp.[DOMAIN-NAME]
+
+
+
+#Install Required Packages
+
+#dnf install realmd sssd oddjob oddjob-mkhomedir adcli samba-common samba-common-tools krb5-workstation authselect-compat -y
+
+
+#Open Firewall Ports for Active Directory
+
+#53(TCP/UDP),88(TCP/UDP),389(TCP/UDP),636(TCP),464(TCP/UDP),3268(TCP) [DNS,Kerberos,LDAP,LDAPS,Kerberos Password Change, Global Catalog]
+
+#Verify connectivity to the domain controller on the Kerberos port.
+#nc -zv 192.168.1.10 88
+
+#Discover the Active Directory Domain
+#realm discover [DOMAIN_NAME]
+
+#Join RHEL 10 to the AD Domain
+#realm join [DOMAIN-NAME] -U [AD admin username]
+
+#Configure SSSD and Home Directory Creation
+#authselect select sssd with-mkhomedir --force
+
+#Enable and start the oddjobd service, which handles home directory creation.
+#systemctl enable --now oddjobd
+
+#Check the SSSD configuration file that realmd generated automatically.
+#cat /etc/sssd/sssd.conf
+
+#If you want users to log in with just their username (without the @domain.com suffix), edit the SSSD configuration file. Change use_fully_qualified_names to False and update the home directory path.
+
+##vim /etc/sssd/sssd.conf
+
+#use_fully_qualified_names = False
+#fallback_homedir = /home/%u
+
+#Restart SSSD after any configuration changes.
+#sudo systemctl restart sssd
+
+#Test AD User Authentication.  Look up an AD user to confirm the integration is working. Replace jmutai with an actual user in your AD domain.
+#id jmutai@example.com
+#If you set use_fully_qualified_names = False, you can query by username only.
+
+#Test SSH login with the AD user account.
+#ssh jmutai@example.com@server01.example.com
+#
+#The home directory is automatically created on first login with-mkhomedir option configured earlier.
+
+#======================================================================
+#Control Access – Limit to Specific Users or Groups
+#By default, all domain users can log in after joining. Restrict access to specific users or groups as needed.
+
+#Permit specific users.
+#realm permit user1@example.com
+
+#Permit access by AD group.
+#realm permit -g [GROUP-NAME]
+
+#To allow all domain users (default behavior).
+#realm permit --all
+
+#To deny all domain users access.
+#realm deny --all
+
+#======================================================================
+
+#********************************************************************
+##Configure Sudo Access for AD Groups
+
+#Domain users have no sudo privileges by default. Grant sudo access to specific AD users or groups by creating a sudoers drop-in file.
+
+#visudo -f /etc/sudoers.d/domain_admins
+
+# Single user
+#user1@example.com    ALL=(ALL)    ALL
+
+# AD group (prefix with %)
+#%sysadmins@example.com    ALL=(ALL)    ALL
+
+# Group with spaces in the name (escape spaces with backslash)
+#%domain\ admins@example.com    ALL=(ALL)    ALL
+
+
+#Verify the sudoers file has no syntax errors.
+
+#visudo -cf /etc/sudoers.d/domain_admins
+#********************************************************************
