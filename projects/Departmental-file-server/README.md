@@ -1,7 +1,6 @@
 ```markdown
 # Project: Departmental File Server
 
----
 
 ## 1. Problem Statement
 
@@ -233,4 +232,3 @@ Expected output (screenshots in `/screenshots/`):
 - **autofs** — replace static client mounts with automount so shares mount on demand
 - **LUKS** — encrypt `/srv/shares` at rest while retaining the quota setup
 - **Bridging into Project 03** — the department shares become the backup targets for the automated backup & rotation project
-```
