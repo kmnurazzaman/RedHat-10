@@ -32,7 +32,7 @@ A small company runs 4 servers (web, database, mail, and a backup server). When 
                              └─────────────┘
 ```
 
-**Environment:** 5 VMs (RHEL 9.x) on KVM/VirtualBox, one subnet `192.168.56.0/24`. Server: 2 vCPU, 2 GB RAM.
+**Environment:** 5 VMs (RHEL 10.x) on KVM/VirtualBox, one subnet `192.168.0.0/24`. Server: 2 vCPU, 2 GB RAM.
 
 ## 3. Build Steps
 
@@ -52,6 +52,11 @@ mkfs.ext4 /dev/logvg/loglv
 mkdir /log
 vim /etc/fstab               # add: /dev/logvg/loglv /log ext4 defaults 0 0
 mount -a                     # verify: df -h /log
+
+# verify that the logical volume is mounted:
+lsblk
+df -hT /log
+findmnt /log
 ```
 
 **Why LVM:** the company may need more space later — `lvextend` + `resize2fs` grows it online without downtime.
@@ -61,25 +66,31 @@ mount -a                     # verify: df -h /log
 Edit `/etc/rsyslog.d/10-remote.conf`:
 
 ```bash
-# Load TCP server module
+# Load TCP input module
 module(load="imtcp")
 
-# Listen on 514
+# Listen on TCP port 514
 input(type="imtcp" port="514")
 
-# Store per-client, per-service logs
+# Store logs by hostname and application
 template(name="RemoteLogs" type="string"
-    string="/log/%HOSTNAME%/%PROGRAMNAME%.log")
+         string="/log/%HOSTNAME%/%PROGRAMNAME%.log")
 
+# Save logs received from remote clients
 if ($fromhost-ip != "127.0.0.1") then {
-    action(type="omfile" dynaFile="RemoteLogs")
+    action(type="omfile" dynaFile="RemoteLogs" createDirs="on")
     stop
 }
 ```
+## Validate the rsyslog configuration
+```bash
+rsyslogd -N1
+```
 
 ```bash
+systemctl enable --now rsyslog
 systemctl restart rsyslog
-systemctl enable rsyslog
+systemctl status rsyslog
 ```
 
 ### 3.3 Firewall + SELinux
@@ -93,7 +104,16 @@ getenforce                   # must say: Enforcing
 
 # rsyslog is allowed to listen on 514 under the rsyslogd_port_t type:
 semanage port -a -t syslogd_port_t -p tcp 514
-# (or use: setsebool -P nis_enabled on — NOT used here; explicit port is cleaner)
+
+#Configure the SELinux context:
+semanage fcontext -a -t var_log_t '/log(/.*)?'
+restorecon -Rv /log
+
+###Verify:
+ls -Zd /log
+
+### verify that rsyslog is listening:
+ss -lntp | grep ':514'
 ```
 
 ### 3.4 Clients — Forward Logs
@@ -101,15 +121,20 @@ semanage port -a -t syslogd_port_t -p tcp 514
 Edit `/etc/rsyslog.d/00-forward.conf` on each client:
 
 ```bash
-*.* @@192.168.56.10:514     # @@ = TCP, @ = UDP
+*.* @@192.168.0.103:514     # @@ = TCP, @ = UDP [CLIENT SERVER IP]
 ```
 
 ```bash
+### Restart rsyslog:
+systemctl enable --now rsyslog
 systemctl restart rsyslog
+systemctl status rsyslog
+
+### Send a test message:
 logger -p local0.info "test message from $(hostname)"
 ```
 
-### 3.5 Log Rotation (server)
+## 3.5 Log Rotation (server)
 
 Create `/etc/logrotate.d/remote`:
 
@@ -121,8 +146,17 @@ Create `/etc/logrotate.d/remote`:
     missingok
     notifempty
     copytruncate
-    create 0640 root loganalysts
 }
+
+
+## This means:
+### Directive	Purpose
+daily		Rotate logs daily
+rotate 7	Keep seven rotated versions
+compress	Compress old logs
+missingok	Do not report an error if a log is missing
+notifempty	Do not rotate empty files
+copytruncate	Copy the log and truncate the original
 ```
 
 ```bash
@@ -133,9 +167,8 @@ logrotate -d /etc/logrotate.d/remote    # dry run, verify no errors
 
 ```bash
 groupadd loganalysts
-useradd -G loganalysts analyst1
 chown -R root:loganalysts /log
-chmod -R 640 /log/*/*
+chmod -R 0750 /log
 ```
 
 ## 4. Verification (Proof It Works)
