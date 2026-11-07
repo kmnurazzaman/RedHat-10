@@ -1,0 +1,304 @@
+# Join RHEL 10 to Windows Active Directory
+
+## Overview
+
+This guide explains how to integrate a Red Hat Enterprise Linux (RHEL) 10 system with a Windows Active Directory (AD) domain using `realmd` and `SSSD`.
+
+It covers:
+
+- DNS configuration and domain discovery
+- Required package installation
+- Active Directory connectivity
+- Joining RHEL 10 to the AD domain
+- SSSD and automatic home directory creation
+- AD user authentication
+- Restricting domain user access
+- Configuring sudo privileges for AD users and groups
+
+## 1. Prerequisites
+
+Before starting, ensure you have:
+
+- A server running RHEL 10 with root or sudo access.
+- A working Windows Active Directory domain (Windows Server 2016 or later).
+- Network connectivity between the Linux server and the domain controller on the required ports.
+- The domain name and domain controller IP address.
+- An Active Directory account with permission to join computers to the domain.
+
+**Note:** On a fresh RHEL 10 installation, register your system with Red Hat Subscription Management if you have not already done so.
+
+## 2. Configure DNS
+
+The RHEL server must use the Active Directory domain controller as its DNS server.
+
+Replace the placeholders with your actual network details.
+
+```bash
+sudo nmcli connection modify [INTERFACE] ipv4.dns [DNS-IP]
+sudo nmcli connection modify [INTERFACE] ipv4.dns-search [DOMAIN-NAME]
+
+sudo nmcli connection down [INTERFACE] && \
+sudo nmcli connection up [INTERFACE]
+```
+
+### Verify DNS resolution
+
+Check whether the LDAP SRV records are resolvable. `realmd` uses these records during domain discovery.
+
+```bash
+nslookup -type=SRV _ldap._tcp.[DOMAIN-NAME]
+```
+
+## 3. Install Required Packages
+
+Install the packages required for Active Directory integration.
+
+```bash
+sudo dnf install -y \
+realmd \
+sssd \
+oddjob \
+oddjob-mkhomedir \
+adcli \
+samba-common \
+samba-common-tools \
+krb5-workstation \
+authselect-compat
+```
+
+## 4. Verify Network Connectivity
+
+Ensure the RHEL server can communicate with the domain controller.
+
+### Required Active Directory ports
+
+| Port | Protocol | Service |
+|---|---|---|
+| 53 | TCP/UDP | DNS |
+| 88 | TCP/UDP | Kerberos |
+| 389 | TCP/UDP | LDAP |
+| 636 | TCP | LDAPS |
+| 464 | TCP/UDP | Kerberos password change |
+| 3268 | TCP | Global Catalog |
+
+Ensure the necessary ports are permitted by the network and firewall policies between the RHEL server and domain controller.
+
+### Test Kerberos connectivity
+
+```bash
+nc -zv [DOMAIN-CONTROLLER-IP] 88
+```
+
+Example:
+
+```bash
+nc -zv 192.168.1.10 88
+```
+
+## 5. Discover the Active Directory Domain
+
+Use `realm discover` to verify that the domain can be discovered.
+
+```bash
+realm discover [DOMAIN-NAME]
+```
+
+Example:
+
+```bash
+realm discover example.com
+```
+
+Review the output to confirm that the domain information is detected.
+
+## 6. Join RHEL 10 to the Active Directory Domain
+
+Join the RHEL server to the domain using an authorized AD account.
+
+```bash
+sudo realm join [DOMAIN-NAME] -U [AD-ADMIN-USERNAME]
+```
+
+Example:
+
+```bash
+sudo realm join example.com -U Administrator
+```
+
+Enter the AD account password when prompted.
+
+### Verify domain membership
+
+```bash
+realm list
+```
+
+## 7. Configure SSSD and Automatic Home Directory Creation
+
+Select the SSSD authentication profile and enable automatic home directory creation.
+
+```bash
+sudo authselect select sssd with-mkhomedir --force
+```
+
+Enable and start the `oddjobd` service:
+
+```bash
+sudo systemctl enable --now oddjobd
+```
+
+### Check the SSSD configuration
+
+The `realmd` utility generates the SSSD configuration automatically.
+
+```bash
+sudo cat /etc/sssd/sssd.conf
+```
+
+### Optional: Allow login using usernames without the domain suffix
+
+By default, domain users may need to log in using their fully qualified usernames, such as `jmutai@example.com`.
+
+If you want users to log in using only their usernames, edit the SSSD configuration:
+
+```bash
+sudo vim /etc/sssd/sssd.conf
+```
+
+Update the following parameters in the relevant domain section:
+
+```ini
+use_fully_qualified_names = False
+fallback_homedir = /home/%u
+```
+
+Restart SSSD after making changes:
+
+```bash
+sudo systemctl restart sssd
+```
+
+## 8. Test Active Directory User Authentication
+
+Look up an AD user to verify that the integration is working.
+
+```bash
+id jmutai@example.com
+```
+
+Replace `jmutai` and `example.com` with an actual AD username and domain.
+
+If `use_fully_qualified_names = False` is configured, you can query the user using only the username:
+
+```bash
+id jmutai
+```
+
+### Test SSH login
+
+From another machine, test SSH access using the AD account:
+
+```bash
+ssh jmutai@example.com@server01.example.com
+```
+
+The user's home directory should be created automatically on the first login when the `with-mkhomedir` configuration is enabled.
+
+## 9. Control Access to the RHEL Server
+
+After joining the domain, configure which AD users or groups are permitted to log in.
+
+### Permit a specific AD user
+
+```bash
+sudo realm permit user1@example.com
+```
+
+### Permit an AD group
+
+```bash
+sudo realm permit -g [GROUP-NAME]
+```
+
+### Allow all domain users
+
+```bash
+sudo realm permit --all
+```
+
+### Deny all domain users
+
+```bash
+sudo realm deny --all
+```
+
+**Security recommendation:** Restrict server access to authorized users and groups rather than allowing every domain user to log in.
+
+## 10. Configure Sudo Access for AD Users and Groups
+
+Domain users do not automatically receive sudo privileges after joining the AD domain.
+
+You can grant administrative privileges to selected AD users or groups by creating a sudoers drop-in file.
+
+Open the file using `visudo`:
+
+```bash
+sudo visudo -f /etc/sudoers.d/domain_admins
+```
+
+### Grant sudo privileges to a specific AD user
+
+```sudoers
+user1@example.com    ALL=(ALL)    ALL
+```
+
+### Grant sudo privileges to an AD group
+
+Prefix the group name with `%`:
+
+```sudoers
+%sysadmins@example.com    ALL=(ALL)    ALL
+```
+
+### Grant sudo privileges to a group containing spaces
+
+Escape spaces in the group name with a backslash:
+
+```sudoers
+%domain\ admins@example.com    ALL=(ALL)    ALL
+```
+
+### Validate the sudoers configuration
+
+Always validate the file after making changes:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/domain_admins
+```
+
+If the validation succeeds, test the permissions using an AD account:
+
+```bash
+sudo -l
+```
+
+## 11. Final Verification Checklist
+
+Use the following commands to verify the integration.
+
+| Check | Command |
+|---|---|
+| DNS SRV records | `nslookup -type=SRV _ldap._tcp.[DOMAIN-NAME]` |
+| Domain discovery | `realm discover [DOMAIN-NAME]` |
+| Domain membership | `realm list` |
+| SSSD status | `systemctl status sssd` |
+| Oddjob status | `systemctl status oddjobd` |
+| AD user lookup | `id username@example.com` |
+| User information | `getent passwd username@example.com` |
+| Sudo permissions | `sudo -l` |
+
+## Conclusion
+
+RHEL 10 can authenticate users against Windows Active Directory through `realmd` and `SSSD`. With the integration configured, administrators can manage Linux login access centrally through AD users and groups and assign sudo privileges to authorized accounts.
+
+This setup is useful in enterprise environments where Linux servers and Windows infrastructure need centralized identity and access management.
